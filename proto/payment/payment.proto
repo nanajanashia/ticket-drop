@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package payment;
+
+option go_package = "github.com/nanajanashia/ticket-drop/proto/payment";
+
+
+service PaymentService {
+    rpc Charge(ChargeRequest) returns (ChargeResponse);
+    rpc Refund(RefundRequest) returns (RefundResponse);
+}
+
+message ChargeRequest {
+    int64 order_id = 1;
+    int64 amount_minor = 2;
+    string currency = 3;
+    string payment_token = 4;
+}
+
+enum ChargeStatus {
+    CHARGE_STATUS_UNSPECIFIED = 0;
+    CHARGE_STATUS_SUCCESS = 1;
+    CHARGE_STATUS_DECLINED = 2;
+}
+
+message ChargeResponse {
+    ChargeStatus charge_status = 1;
+}
+
+message RefundRequest {
+    int64 order_id = 1;
+}
+
+message RefundResponse {
+}

@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package tickets;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/nanajanashia/ticket-drop/proto/tickets";
+
+service TicketsService {
+    rpc Hold(HoldRequest) returns (HoldResponse);
+    rpc Release(ReleaseRequest) returns (ReleaseResponse);
+    rpc Confirm(ConfirmRequest) returns (ConfirmResponse);
+}
+
+message HoldRequest {
+    int64 event_id = 1;
+    int64 order_id = 2;
+    int32 quantity = 3;
+}
+
+enum HoldStatus {
+    HOLD_STATUS_UNSPECIFIED = 0;
+    HOLD_STATUS_SUCCESS = 1;
+    HOLD_STATUS_EXHAUSTED = 2;
+}
+
+message HoldResponse {
+    HoldStatus hold_status = 1;
+    google.protobuf.Timestamp expires_at = 2;
+}
+
+message ConfirmRequest {
+    int64 order_id = 1;
+}
+
+enum ConfirmStatus {
+    CONFIRM_STATUS_UNSPECIFIED = 0;
+    CONFIRM_STATUS_SUCCESS = 1;
+    CONFIRM_STATUS_EXPIRED = 2;
+}
+
+message ConfirmResponse {
+    ConfirmStatus confirm_status = 1;
+}
+
+message ReleaseRequest {
+    int64 order_id = 1;
+}
+
+message ReleaseResponse {}
