@@ -15,5 +15,14 @@ services:
       timeout: 3s
       retries: 15
 
+  localstack:
+    image: localstack/localstack:4.4
+    environment:
+      SERVICES: sns,sqs
+    ports:
+      - "4566:4566"
+    volumes:
+      - ./deploy/localstack/init.sh:/etc/localstack/init/ready.d/init.sh:ro
+
 volumes:
   pgdata:
