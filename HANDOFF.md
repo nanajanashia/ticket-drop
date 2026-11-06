@@ -101,28 +101,101 @@ AWS cost warning: ALB, NAT gateway and RDS cost money while idle; use Terraform 
 
 ## 7. Open questions (never answered)
 
-- Language: assumed **Go** (user is a Go/PHP backend dev). Possibly one service in PHP to show language independence.
+- Language: **Go** (confirmed; the whole build so far is Go). One service in PHP is still an option, to show language independence.
 - Kubernetes vs ECS for the eventual deploy.
 - Time budget per week (decides how far into the stretch goals to go).
 
-## 8. Next step (to walk through next session)
+## 8. Build progress (as of 6 Nov 2026)
 
-Build the plain version locally, no fixes yet:
-1. Repo layout: monorepo with `order/`, `tickets/`, `payment/`, `email/`, `proto/`, `docker-compose.yml`, `loadtest/`.
-2. Write the `.proto` contracts first: Tickets (Hold, Confirm, Release) and Payment (Charge).
-3. docker-compose: one Postgres container with a separate database + user per service, plus LocalStack for SNS/SQS.
-4. Implement Tickets and Payment gRPC servers with their schemas.
-5. Implement Order: HTTP `POST /orders`, calls Hold -> Charge -> Confirm, saves state. Publish directly to SNS at first (no outbox yet, so experiment 4 can show the bug).
-6. Implement Email as an SQS long-polling consumer that logs the "email".
-7. Happy-path test with curl, then start experiment 1.
+### Done
+- **Repo:** `~/projects/ticket-drop`, git on `main`, pushed to https://github.com/nanajanashia/ticket-drop.git.
+  There is one commit, "Add gRPC contracts for Tickets and Payment services", authored with the user's
+  default git identity (njanashia).
+- **Layout:** Go workspace (`go.work`, go 1.26.0) with one module per service: `proto`, `order`,
+  `tickets`, `payment`, `email`. Module paths are `github.com/nanajanashia/ticket-drop/<name>`.
+  The service modules contain only `go.mod` so far.
+- **Tooling:** protoc 36.2 (brew), protoc-gen-go and protoc-gen-go-grpc are in `~/go/bin`.
+  Installed Go is 1.25.0. `GOTOOLCHAIN=auto` downloads 1.26 automatically, because grpc v1.85
+  requires it. Docker images will need `golang:1.26`.
+- **`proto/Makefile`:** `make generate` runs protoc on `$(wildcard */*.proto)` with
+  `paths=source_relative`. The generated `.pb.go` files are committed.
+- **`proto/tickets/tickets.proto`** (package `tickets`, no v1 suffix, by the user's choice):
+  - `Hold(HoldRequest{event_id int64, order_id int64, quantity int32})` returns
+    `HoldResponse{hold_status HoldStatus, expires_at google.protobuf.Timestamp}`.
+    `HoldStatus` is UNSPECIFIED / SUCCESS / EXHAUSTED.
+  - `Confirm(ConfirmRequest{order_id})` returns `ConfirmResponse{confirm_status ConfirmStatus}`.
+    `ConfirmStatus` is UNSPECIFIED / SUCCESS / EXPIRED.
+  - `Release(ReleaseRequest{order_id})` returns `ReleaseResponse{}` (empty).
+- **`proto/payment/payment.proto`** (package `payment`):
+  - `Charge(ChargeRequest{order_id, amount_minor int64, currency string, payment_token string})`
+    returns `ChargeResponse{charge_status ChargeStatus}`. `ChargeStatus` is UNSPECIFIED / SUCCESS / DECLINED.
+  - `Refund(RefundRequest{order_id})` returns `RefundResponse{}` (empty).
+- `cd proto && make generate && go build ./...` runs clean with no warnings.
 
-## 9. How to guide the user
+### In progress: the async event contract
+Next is `proto/events/events.proto` with an `OrderConfirmed` message. Order publishes it to SNS as
+JSON via `protojson`, and Email consumes it from SQS. **The open question put to the user, not yet
+answered:** "What fields does OrderConfirmed need, given that Email has no access to Order's or
+Tickets' data and can't look anything up?" Answers to steer towards:
+- `event_id`, a unique ID per event. Email needs it to dedupe at-least-once delivery
+  (experiment 5). This is distinct from order_id.
+- `order_id`, buyer email address, event name or ID, quantity, and amount and currency for a receipt.
+  The event must carry everything Email needs (event-carried state), because there is no
+  callback to Order.
+- Optionally `occurred_at` (a Timestamp).
+Teaching points for this step: async contracts have no compiler between producer and consumer;
+adding fields is safe and removing or renumbering them is not; and the event describes a fact
+in the past tense ("OrderConfirmed"), not a command ("SendEmail").
 
-The user is an experienced backend developer (8+ years, Go/PHP). Don't hand-hold or explain basics
-like Docker, SQL or HTTP. Do teach: for each step, explain the microservices-specific reasoning and
-trade-offs, point out what will break and why, and let the user write the code. Prefer short
-pointers, questions and "what do you think happens if..." over full solutions, unless asked.
+### Remaining steps after the event contract
+1. docker-compose: one Postgres with a separate DB and user per service, plus LocalStack (SNS+SQS).
+2. Tickets service: schema (events.available, holds with order_id UNIQUE and a status column
+   HELD/CONFIRMED/RELEASED plus expires_at) and the gRPC server, following the decisions log.
+3. Payment service: schema (charges with order_id UNIQUE, status) and a fake processor
+   (`tok_decline` always declines) plus Refund.
+4. Order: HTTP `POST /orders` inserts a PENDING row, then Hold, then a check on remaining time
+   against expires_at, then Charge, then Confirm. Each failure branch runs its compensation. It
+   publishes to SNS directly at first, with no outbox, so experiment 4 shows the bug.
+5. Email: an SQS long-polling consumer that logs the email.
+6. Happy-path curl test, then experiment 1 (kill Payment mid-checkout).
+
+## 9. How to guide the user (important; read this first)
+
+The user is an experienced backend developer (8+ years, Go/PHP). Don't explain basics like Docker,
+SQL or HTTP. They have little prior proto/gRPC experience. They had to learn what a .proto file
+is, and that `service` generates a Go interface.
+
+**Interaction rules (the user insisted on these after the first walkthrough was too much at once):**
+- Go strictly one small step per message. Ask one question at a time and wait for the answer.
+- Explain a concept only when the current step needs it, and keep it short and concrete, tied to
+  this system (e.g. "Order would charge the card for seats that were never held").
+- When code or structure is needed, say what to create and let the user write it. Then read the
+  file yourself and check it. For small mechanical issues (typos, a missing semicolon, naming
+  conventions), just say what to fix. For design issues, give a hint or a "what happens if..."
+  question first. If the user says they don't understand, explain plainly and give the answer.
+  Don't keep hinting.
+- Never refer to decisions by their log number (D6, D7...) without saying what they mean. The
+  user was confused by this. Use plain words.
+- When the user asks you to do something small (like Makefile tweaks), just do it.
+- Record each newly agreed decision in `DECISIONS.md` with a **Check:** line, because the user
+  wants their implementation reviewed against it later.
+- Git: commit with the user's default git identity. Never override user.name, and never add a
+  Claude co-author or attribution line. Only commit or push when asked.
+
+**Concepts the user has now learned:** idempotency keys per operation (not per caller), DB
+constraints rather than app-level checks for races, statuses versus gRPC errors and retry rules,
+UNSPECIFIED zero values, sagas and compensations (orchestration versus choreography), idempotent
+compensations judged by end state, facts versus instructions in statuses, single source of
+truth in requests, and money as int64 minor units.
 
 ## 10. Decisions log
 
-Decisions agreed during the build are recorded in `DECISIONS.md` in this folder. Review the implementation against it.
+Decisions agreed during the build are in `DECISIONS.md` in this folder (D1 to D11 so far: module
+layout, Hold idempotency, the DB constraint for races, statuses versus errors, no version suffix,
+UNSPECIFIED zero values, expires_at and no hold_id, ConfirmStatus EXPIRED, idempotent Confirm,
+Release rules, and the Payment contract). Review the implementation against its **Check:** lines.
+
+## 11. How to resume
+
+When the user says "continue": re-ask the open question about the fields `OrderConfirmed` needs
+(see section 8, "In progress"), in one short message. Don't recap everything.

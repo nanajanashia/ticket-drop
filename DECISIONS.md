@@ -98,3 +98,14 @@ refunded. Compensations must eventually succeed.
 **Check:** charges.order_id is UNIQUE. A retried Charge returns the original result without
 charging twice. Refund is a single state change from CHARGED to REFUNDED. Order retries Refund
 on transient errors until it succeeds.
+
+## D12. OrderConfirmed event: carries everything Email needs, with its own message_id (6 Nov 2026)
+Fields: message_id (dedupe key, unique per published message), order_id, buyer email, concert
+name, quantity, amount_minor + currency. Optionally occurred_at.
+**Why:** Email cannot look anything up, so the event carries the state it needs (event-carried
+state). SQS delivers at least once, so Email dedupes. The key is message_id rather than order_id,
+because one order will eventually produce several messages (refund notice, resend). Named
+message_id because event_id already means "the concert" in the Tickets contract.
+**Check:** Order generates message_id once and reuses it if it retries the publish. Email
+dedupes with a processed_messages table: INSERT ... ON CONFLICT DO NOTHING, and sends only if
+the row was inserted. It does not use check-then-send, because two consumers can race.
