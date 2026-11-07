@@ -109,3 +109,17 @@ message_id because event_id already means "the concert" in the Tickets contract.
 **Check:** Order generates message_id once and reuses it if it retries the publish. Email
 dedupes with a processed_messages table: INSERT ... ON CONFLICT DO NOTHING, and sends only if
 the row was inserted. It does not use check-then-send, because two consumers can race.
+
+## D13. Tickets schema: events + reservations; expires_at is the rule, the sweeper is cleanup (6 Nov 2026)
+Tables: events (id, name, tickets available) and reservations (order_id UNIQUE, event_id,
+quantity, status HELD/CONFIRMED/RELEASED, expires_at). The table is named reservations, not
+holds, because most rows end up CONFIRMED. A background goroutine in Tickets releases expired
+HELD rows every ~30s and returns their stock, in one tx, only from HELD.
+Confirm checks expires_at itself and does not rely on the sweeper having run:
+UPDATE ... SET status='CONFIRMED' WHERE order_id=$1 AND status='HELD' AND expires_at > now().
+If 0 rows: CONFIRMED -> SUCCESS (retry), RELEASED or HELD-but-expired -> EXPIRED, none -> NOT_FOUND.
+**Why:** the outcome must depend on the deadline in the contract, not on when the sweeper last
+ran. Both Confirm and the sweeper are conditional updates on status='HELD', so the row lock
+makes exactly one of them win.
+**Check:** no "SELECT then UPDATE" in Confirm. The sweeper and Release share the same
+HELD-only condition. There is a test that confirms an expired-but-unswept reservation and gets EXPIRED.
