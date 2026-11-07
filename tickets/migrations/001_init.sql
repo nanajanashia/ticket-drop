@@ -1,3 +1,4 @@
+-- +goose Up
 CREATE TABLE events (
     id                bigserial PRIMARY KEY,
     title             varchar(100) NOT NULL,
@@ -15,3 +16,8 @@ CREATE TABLE reservations (
     status     reservation_status NOT NULL,
     expires_at timestamptz NOT NULL
 );
+
+-- +goose Down
+DROP TABLE reservations;
+DROP TYPE reservation_status;
+DROP TABLE events;
